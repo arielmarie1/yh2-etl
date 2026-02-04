@@ -19,14 +19,12 @@ DB_CONFIG = {
 }
 
 
-def ensure_db_config(cfg: dict):
-    missing = [k for k, v in cfg.items() if v in (None, "")]
-    if missing:
-        raise RuntimeError(f"Missing DB config for: {', '.join(missing)}. "
-                           f"Check your .env (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS).")
-
-
 if __name__ == "__main__":
+    # Validate database configuration (env file)
+    DatabaseManager.ensure_db_config(DB_CONFIG)
+    # Create database if doesn't already exist
+    DatabaseManager.ensure_database_exists(DB_CONFIG)
+    # Create connection to database
     connection_string = create_connection_string(**DB_CONFIG)
     db_manager = DatabaseManager(connection_string)
 

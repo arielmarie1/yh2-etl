@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, Integer, String, Float, DateTime, ForeignK
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 import pandas as pd
 import logging
+import psycopg2 as pg2
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -77,8 +78,49 @@ class DatabaseManager:
             database_uri (str): Database connection URI (e.g., 'postgresql://user:pass@host:port/db')
         """
         self.engine = create_engine(database_uri, echo=False, future=True)
-        self.Session = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)    
-        
+        self.Session = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
+
+    @staticmethod
+    def ensure_db_config(cfg: dict):
+        missing = [k for k, v in cfg.items() if v in (None, "")]
+        if missing:
+            raise RuntimeError(f"Missing DB config for: {', '.join(missing)}. "
+                               f"Check your .env (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS).")
+
+    @staticmethod
+    def ensure_database_exists(cfg: dict, default_db: str = "postgres", verbose: bool = True) \
+            -> bool:
+
+        conn = pg2.connect(
+            host=cfg["host"],
+            port=cfg["port"],
+            user=cfg["username"],
+            password=cfg["password"],
+            dbname=default_db,
+        )
+
+        # Check database exists
+        try:
+            conn.autocommit = True
+
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (cfg["database"],),)
+                exists = cur.fetchone() is not None
+
+                if exists:
+                    if verbose:
+                        print(f"✓ Database '{cfg["database"]}' already exists.")
+                    return True
+
+                if verbose:
+                    print(f"✖ Database '{cfg['database']}' does not exist yet. Creating it...")
+                cur.execute(f'CREATE DATABASE "{cfg['database']}";')
+                if verbose:
+                    print(f"Database '{cfg['database']}' created.")
+                return False
+        finally:
+            conn.close()
+
     def create_tables(self):
         """Create all tables defined in the models"""
         try:
