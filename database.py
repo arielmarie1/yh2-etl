@@ -1,5 +1,5 @@
 from psycopg2.extras import execute_values
-from sqlalchemy import create_engine, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import create_engine, Integer, String, Float, DateTime, ForeignKey, or_, and_
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 import pandas as pd
 import logging
@@ -27,7 +27,7 @@ class Scenario(Base):
     plan_data = relationship("Plan", back_populates="scenario_info")
     
     def __repr__(self):
-        return f'<Scenario {self.scenario}_{self.duration}_{self.location}_{self.constraint}_{self.amount}>'
+        return f'<Scenario {self.duration}_{self.scenario}>'
 
 
 class Timeseries(Base):
@@ -109,12 +109,12 @@ class DatabaseManager:
 
                 if exists:
                     if verbose:
-                        print(f"✓ Database '{cfg["database"]}' already exists.")
+                        print(f"✓ Database '{cfg['database']}' already exists.")
                     return True
 
                 if verbose:
                     print(f"✖ Database '{cfg['database']}' does not exist yet. Creating it...")
-                cur.execute(f'CREATE DATABASE "{cfg['database']}";')
+                cur.execute(f'CREATE DATABASE "{cfg["database"]}";')
                 if verbose:
                     print(f"Database '{cfg['database']}' created.")
                 return False
@@ -226,18 +226,8 @@ class DatabaseManager:
             if mode == "replace":
                 logger.info(f"Deleting existing plan rows for {len(involved_ids)} scenario(s)...")
                 self._delete_existing_for_scenarios(session, Plan, involved_ids)
-            elif mode == "skip":
-                existing = self._scenario_ids_with_existing_data(session, Plan)
-                keep_ids = involved_ids - existing
-                if not keep_ids:
-                    logger.info(f"All scenarios have already been added to the database; skipping insert")
-                    return
-                keys = ["Duration", "Scenario"]
-                df = df[df.apply(lambda r: scenario_ids_map[(r["Duration"], r["Scenario"])] in keep_ids, axis=1)]
-                logger.info(f"Skipping existing scenarios. Inserting rows for {len(keep_ids)} new scenario(s).")
-
-            # IMPORTANT: recompute total_rows if you filtered df in 'skip' mode
-            total_rows = len(df)
+            elif mode == "upload":
+                logger.info(f"Uploading existing plan rows as-is")
 
             # Columns in the target table, and rows as tuples aligned to those columns
             cols = ["component", "zone", "indicator", "value", "unit", "alias", "scenario_id"]
@@ -271,7 +261,7 @@ class DatabaseManager:
         finally:
             session.close()
 
-    def insert_timeseries_data(self, df: pd.DataFrame, batch_size: int = 50000, mode: str = "replace"):
+    def insert_timeseries_data(self, df: pd.DataFrame, batch_size: int = 50000, mode: str = "upload"):
         """
         Inserts rows into Timeseries.
 
@@ -296,16 +286,8 @@ class DatabaseManager:
             if mode == "replace":
                 logger.info(f"Deleting existing timeseries rows for {len(involved_ids)} scenario(s)...")
                 self._delete_existing_for_scenarios(session, Timeseries, involved_ids)
-            elif mode == "skip":
-                existing = self._scenario_ids_with_existing_data(session, Timeseries)
-                keep_ids = involved_ids - existing
-                if not keep_ids:
-                    logger.info("All scenarios have already been added to the database; skipping insert")
-                    return
-                # filter df to only scenarios that don't already exist
-                keys = ["Duration", "Scenario"]
-                df = df[df.apply(lambda r: scenario_ids_map[(r["Duration"], r["Scenario"])] in keep_ids, axis=1)]
-                logger.info(f"Skipping existing scenarios. Inserting rows for {len(keep_ids)} new scenario(s).")
+            elif mode == "upload":
+                logger.info("Uploading timeseries rows as-is")
 
             # Prepare rows for bulk insert
             cols = ["time", "component", "zone", "parameter", "value", "scenario_id"]
